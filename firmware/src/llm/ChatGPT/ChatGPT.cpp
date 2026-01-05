@@ -561,9 +561,24 @@ String ChatGPT::execChatGpt(const JsonDocument& doc, String& calledFunc) {
   String ret = https_post_json("https://api.openai.com/v1/chat/completions", doc, root_ca_openai);
   avatar.setExpression(Expression::Neutral);
   avatar.setSpeechText("");
-  Serial.println(ret);
+  
+  // デバッグ: レスポンスの先頭200文字を確認
+  Serial.printf("[execChatGpt] Response length: %d bytes\n", ret.length());
+  if(ret.length() > 0) {
+    String prefix = ret.substring(0, min(200, (int)ret.length()));
+    Serial.println("[execChatGpt] Response prefix:");
+    Serial.println(prefix);
+    
+    // JSONの開始位置を検索
+    int jsonStart = ret.indexOf('{');
+    if(jsonStart > 0) {
+      Serial.printf("[execChatGpt] WARNING: JSON starts at position %d (not 0). Removing HTTP headers.\n", jsonStart);
+      ret = ret.substring(jsonStart);
+    }
+  }
+  
   if(ret != ""){
-    DynamicJsonDocument retDoc(50 * 1024);  // GPT-4oの長い応答に対応
+    SpiRamJsonDocument retDoc(200 * 1024);  // 画像を含むGPT-4oの長い応答に対応
     DeserializationError error = deserializeJson(retDoc, ret.c_str());
     if (error) {
       Serial.print(F("deserializeJson() failed: "));

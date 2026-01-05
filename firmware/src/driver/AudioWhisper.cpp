@@ -3,7 +3,8 @@
 
 //constexpr size_t record_number = 300/2;
 //constexpr size_t record_number = 400;
-constexpr size_t record_number = 200;
+//constexpr size_t record_number = 200;  // 元の設定: 約1.875秒
+constexpr size_t record_number = 400;    // 約3.75秒に延長（精度向上）
 constexpr size_t record_length = 150;
 constexpr size_t record_size = record_number * record_length;
 constexpr size_t record_samplerate = 16000;

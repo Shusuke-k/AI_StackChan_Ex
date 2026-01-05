@@ -30,6 +30,10 @@ String Whisper::Transcribe(AudioWhisper* audio) {
     "--" + String(boundary) + "\r\n"
     "Content-Disposition: form-data; name=\"language\"\r\n\r\nja\r\n"
     "--" + String(boundary) + "\r\n"
+    "Content-Disposition: form-data; name=\"temperature\"\r\n\r\n0\r\n"
+    "--" + String(boundary) + "\r\n"
+    "Content-Disposition: form-data; name=\"prompt\"\r\n\r\n日本語の音声です。正確に文字起こししてください。\r\n"
+    "--" + String(boundary) + "\r\n"
     "Content-Disposition: form-data; name=\"file\"; filename=\"speak.wav\"\r\n"
     "Content-Type: application/octet-stream\r\n\r\n";
   const String footer = "\r\n--" + String(boundary) + "--\r\n";
