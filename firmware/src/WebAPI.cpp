@@ -404,20 +404,44 @@ static const char DRAW_HTML[] PROGMEM = R"KEWL(
 		imageInput.addEventListener('change', (e) => {
 			const file = e.target.files[0];
 			if (file) {
+				// ファイルサイズチェック（10MB以上は警告）
+				if (file.size > 10 * 1024 * 1024) {
+					showStatus('⚠️ 大きな画像です。処理に時間がかかります...', 'info');
+				}
+				
 				const reader = new FileReader();
 				reader.onload = (event) => {
 					const img = new Image();
 					img.onload = () => {
-						const maxW = drawCanvas.width * 0.5; const maxH = drawCanvas.height * 0.5;
+						// 画像が大きすぎる場合は自動的にリサイズ
+						const maxW = drawCanvas.width * 0.5; 
+						const maxH = drawCanvas.height * 0.5;
 						let w = img.width, h = img.height;
+						
+						// メモリ効率のため、非常に大きな画像はより積極的にリサイズ
+						const MAX_PIXELS = 800 * 600; // 最大ピクセル数
+						if (w * h > MAX_PIXELS) {
+							const scale = Math.sqrt(MAX_PIXELS / (w * h));
+							w *= scale;
+							h *= scale;
+						}
+						
 						if (w > maxW || h > maxH) {
 							const ratio = Math.min(maxW / w, maxH / h);
 							w *= ratio; h *= ratio;
 						}
+						
 						objects.push({ type: 'image', x: (drawCanvas.width - w) / 2, y: (drawCanvas.height - h) / 2, w, h, img, rotation: 0 });
-						redrawAll(); showStatus('画像を追加しました', 'success');
+						redrawAll(); 
+						showStatus('✅ 画像を追加しました', 'success');
+					};
+					img.onerror = () => {
+						showStatus('❌ 画像の読み込みに失敗しました', 'error');
 					};
 					img.src = event.target.result;
+				};
+				reader.onerror = () => {
+					showStatus('❌ ファイルの読み込みに失敗しました', 'error');
 				};
 				reader.readAsDataURL(file);
 			}
@@ -512,6 +536,20 @@ static const char DRAW_HTML[] PROGMEM = R"KEWL(
 				}
 			}
 			tmpCanvas.toBlob((blob) => {
+				// サイズチェック（1MB以上の場合は品質を下げて再圧縮）
+				if (blob.size > 1 * 1024 * 1024) {
+					showStatus('⚠️ 画像が大きいため圧縮しています...', 'info');
+					// 品質を下げて再圧縮（JPEG形式で）
+					tmpCanvas.toBlob((compressedBlob) => {
+						if (compressedBlob.size > 1.5 * 1024 * 1024) {
+							showStatus('❌ 画像が大きすぎます。シンプルな絵にしてください', 'error');
+							return;
+						}
+						sendCompressedImage(compressedBlob);
+					}, 'image/jpeg', 0.7);
+					return;
+				}
+				
 				const formData = new FormData();
 				formData.append('image', blob, 'drawing.png');
 				
@@ -523,10 +561,27 @@ static const char DRAW_HTML[] PROGMEM = R"KEWL(
 				
 				fetch('/image_upload', { method: 'POST', body: formData })
 					.then(response => response.text())
-					.then(data => showStatus('送信完了！スタックチャンが説明します', 'success'))
-					.catch(error => showStatus('送信失敗: ' + error, 'error'));
-			}, 'image/png');
+					.then(data => showStatus('✅ 送信完了！スタックチャンが説明します', 'success'))
+					.catch(error => showStatus('❌ 送信失敗: ' + error, 'error'));
+			}, 'image/png', 0.85);
 		}
+		
+		function sendCompressedImage(blob) {
+			const formData = new FormData();
+			formData.append('image', blob, 'drawing.jpg');
+			
+			// 質問文があれば追加
+			const question = document.getElementById('drawQuestionInput')?.value.trim();
+			if (question) {
+				formData.append('question', question);
+			}
+			
+			fetch('/image_upload', { method: 'POST', body: formData })
+				.then(response => response.text())
+				.then(data => showStatus('✅ 送信完了！スタックチャンが説明します', 'success'))
+				.catch(error => showStatus('❌ 送信失敗: ' + error, 'error'));
+		}
+		
 		function downloadImage() {
 			const tmpCanvas = document.createElement('canvas');
 			tmpCanvas.width = drawCanvas.width;
@@ -936,6 +991,10 @@ void handle_image_upload() {
   if (upload.status == UPLOAD_FILE_START) {
     Serial.printf("Upload Start: %s\n", upload.filename.c_str());
     
+    // 待機音声タスクを起動（アップロード中のフィードバック）
+    avatar.setSpeechText("画像を受信中...");
+    robot->startIdlePhraseTask();
+    
     // アップロード開始時にquestionフィールドを取得（まだ取得できる段階）
     tempQuestion = "";
     
@@ -972,6 +1031,10 @@ void handle_image_upload() {
       uploadFile.close();
       Serial.printf("Upload Complete: %d bytes\n", upload.totalSize);
       
+      // 待機音声タスクを停止
+      robot->stopIdlePhraseTask();
+      avatar.setSpeechText("");
+      
       // 質問文を取得（POSTパラメータから）
       // multipart/form-dataの場合、この時点でargが利用可能
       if (server.hasArg("question")) {
@@ -999,6 +1062,10 @@ void handle_image_upload() {
     if (uploadFile) {
       uploadFile.close();
     }
+    // 待機音声タスクを停止
+    robot->stopIdlePhraseTask();
+    avatar.setSpeechText("");
+    
     Serial.println("Upload Aborted");
     server.send(500, "text/plain", "Upload Aborted");
   }

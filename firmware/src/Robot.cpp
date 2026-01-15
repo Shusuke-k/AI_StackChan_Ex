@@ -22,6 +22,28 @@ using namespace m5avatar;
 extern Avatar avatar;
 extern bool servo_home;
 
+// 待機音声タスク用のグローバル変数
+static volatile bool g_idlePhraseTaskRunning = false;
+static TaskHandle_t g_idlePhraseTaskHandle = NULL;
+
+void idlePhraseLoopTask(void* arg) {
+  Robot* robot = (Robot*)arg;
+  Serial.println("[IdlePhraseTask] Started");
+  
+  while(g_idlePhraseTaskRunning) {
+    robot->playRandomIdlePhrase();
+    
+    // 1秒待機（タスク終了チェックを100ms毎に実行）
+    for(int i = 0; i < 10 && g_idlePhraseTaskRunning; i++) {
+      vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
+  }
+  
+  Serial.println("[IdlePhraseTask] Stopped");
+  g_idlePhraseTaskHandle = NULL;
+  vTaskDelete(NULL);
+}
+
 //#if defined(REALTIME_API_WITH_TTS)
 // TTS非同期実行用のタスク
 //
@@ -263,7 +285,17 @@ void Robot::invokeAsyncTtsStreamTask(void)
 
 String Robot::listen()
 {
+  // 即座にフィードバック音を鳴らす
+  servo_home = false;
+  avatar.setExpression(Expression::Happy);
+  avatar.setSpeechText("聞いています...");
+  
   String ret = stt->speech_to_text();
+  
+  avatar.setSpeechText("");
+  avatar.setExpression(Expression::Neutral);
+  servo_home = true;
+  
   return ret;
 }
 
@@ -343,6 +375,52 @@ void Robot::playRandomIdlePhrase()
                 idle_phrases.phrases[idx].c_str(), cache_path.c_str());
   
   tts->play_from_file(cache_path);
+}
+
+void Robot::startIdlePhraseTask()
+{
+  // 既に起動中の場合は何もしない
+  if(g_idlePhraseTaskRunning) {
+    return;
+  }
+  
+  // キャッシュが存在しない場合は起動しない
+  if(!idlePhraseCacheExists()) {
+    Serial.println("[IdlePhraseTask] Cache not found, task not started");
+    return;
+  }
+  
+  g_idlePhraseTaskRunning = true;
+  if(g_idlePhraseTaskHandle == NULL) {
+    xTaskCreatePinnedToCore(
+      idlePhraseLoopTask,
+      "idlePhraseTask",
+      4096,
+      this,
+      1,
+      &g_idlePhraseTaskHandle,
+      APP_CPU_NUM
+    );
+    Serial.println("[IdlePhraseTask] Task started");
+  }
+}
+
+void Robot::stopIdlePhraseTask()
+{
+  if(!g_idlePhraseTaskRunning) {
+    return;
+  }
+  
+  g_idlePhraseTaskRunning = false;
+  
+  // タスクが完全に終了するまで少し待機
+  int waitCount = 0;
+  while(g_idlePhraseTaskHandle != NULL && waitCount < 50) {
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+    waitCount++;
+  }
+  
+  Serial.println("[IdlePhraseTask] Task stopped");
 }
 
 bool Robot::idlePhraseCacheExists()

@@ -40,6 +40,10 @@ public:
     void initIdlePhraseCache();
     void playRandomIdlePhrase();
     bool idlePhraseCacheExists();
+    
+    // 待機音声タスク制御
+    void startIdlePhraseTask();
+    void stopIdlePhraseTask();
 
     // TTS非同期版
     //

@@ -164,6 +164,9 @@ void ImageExplainMod::processImage(const String& imagePath)
   avatar.setExpression(Expression::Doubt);
   avatar.setSpeechText("画像を解析中...");
   
+  // 待機音声タスクを起動
+  robot->startIdlePhraseTask();
+  
   Serial.println("Processing image: " + imagePath);
   
   // SDカードから画像を読み込む
@@ -183,9 +186,9 @@ void ImageExplainMod::processImage(const String& imagePath)
   size_t fileSize = imageFile.size();
   Serial.printf("Image file size: %d bytes\n", fileSize);
   
-  // ファイルサイズチェック（大きすぎる場合はエラー）
-  if(fileSize > 1024 * 1024 * 2) {  // 2MB以上
-    Serial.println("Image file too large");
+  // ファイルサイズチェック（緩和: 5MBまで許可）
+  if(fileSize > 1024 * 1024 * 5) {  // 5MB以上
+    Serial.println("Image file too large (>5MB)");
     avatar.setExpression(Expression::Sad);
     avatar.setSpeechText("画像が大きすぎます");
     imageFile.close();
@@ -196,10 +199,12 @@ void ImageExplainMod::processImage(const String& imagePath)
     return;
   }
   
-  // 画像データをメモリに読み込む
-  uint8_t* imageData = (uint8_t*)ps_malloc(fileSize);
-  if(!imageData) {
-    Serial.println("Failed to allocate memory for image");
+  // ストリーミングbase64エンコード（チャンク処理でメモリ節約）
+  Serial.println("Streaming Base64 encode...");
+  const size_t CHUNK_SIZE = 3072; // 3KBチャンク（base64効率のため3の倍数）
+  uint8_t* chunkBuffer = (uint8_t*)malloc(CHUNK_SIZE);
+  if(!chunkBuffer) {
+    Serial.println("Failed to allocate chunk buffer");
     avatar.setExpression(Expression::Sad);
     avatar.setSpeechText("メモリ不足です");
     imageFile.close();
@@ -210,14 +215,40 @@ void ImageExplainMod::processImage(const String& imagePath)
     return;
   }
   
-  size_t bytesRead = imageFile.read(imageData, fileSize);
+  // Base64文字列を段階的に構築（グローバルバッファを使用）
+  g_base64ImageBuffer = "";
+  g_base64ImageBuffer.reserve((fileSize * 4 / 3) + 4); // 事前に容量確保
+  
+  size_t totalRead = 0;
+  Serial.printf("File size: %d bytes, encoding in chunks...\n", fileSize);
+  
+  while(totalRead < fileSize) {
+    size_t toRead = min((size_t)CHUNK_SIZE, fileSize - totalRead);
+    size_t bytesRead = imageFile.read(chunkBuffer, toRead);
+    
+    if(bytesRead > 0) {
+      // チャンクをbase64エンコードして追加
+      String encoded = base64::encode(chunkBuffer, bytesRead);
+      g_base64ImageBuffer += encoded;
+      totalRead += bytesRead;
+      
+      // 進捗表示（10%刻み）
+      if(totalRead % (fileSize / 10 + 1) == 0 || totalRead == fileSize) {
+        Serial.printf("Encoded: %d%%\n", (totalRead * 100) / fileSize);
+      }
+    } else {
+      break;
+    }
+  }
+  
+  free(chunkBuffer);
   imageFile.close();
   
-  if(bytesRead != fileSize) {
-    Serial.println("Failed to read image file");
+  if(totalRead != fileSize) {
+    Serial.printf("Encoding incomplete: %d/%d bytes\n", totalRead, fileSize);
     avatar.setExpression(Expression::Sad);
     avatar.setSpeechText("画像の読み込みエラー");
-    free(imageData);
+    g_base64ImageBuffer = "";
     processing = false;
     delay(2000);
     avatar.setSpeechText("画像を送信してください");
@@ -225,12 +256,10 @@ void ImageExplainMod::processImage(const String& imagePath)
     return;
   }
   
-  // Base64エンコード
-  Serial.println("Encoding to Base64...");
-  g_base64ImageBuffer = base64::encode(imageData, fileSize);
-  free(imageData);
+  Serial.printf("Base64 encoded: %d bytes → %d bytes\n", fileSize, g_base64ImageBuffer.length());
   
-  Serial.printf("Base64 encoded size: %d bytes\n", g_base64ImageBuffer.length());
+  // 待機音声タスクを一時停止（LLM処理中に再度起動される）
+  robot->stopIdlePhraseTask();
   
   // GPT-4 Visionに送信して解析
   avatar.setSpeechText("AIに問い合わせ中...");

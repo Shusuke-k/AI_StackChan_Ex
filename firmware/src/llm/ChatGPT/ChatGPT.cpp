@@ -16,28 +16,6 @@
 using namespace m5avatar;
 extern Avatar avatar;
 
-// 待機音声繰り返し再生タスク
-static volatile bool idlePhraseTaskRunning = false;
-static TaskHandle_t idlePhraseTaskHandle = NULL;
-
-void idlePhraseTask(void* arg) {
-  Robot* robot = (Robot*)arg;
-  Serial.println("[IdlePhraseTask] Started");
-  
-  while(idlePhraseTaskRunning) {
-    robot->playRandomIdlePhrase();
-    
-    // 1秒待機（タスク終了チェックを100ms毎に実行）
-    for(int i = 0; i < 10 && idlePhraseTaskRunning; i++) {
-      vTaskDelay(100 / portTICK_PERIOD_MS);
-    }
-  }
-  
-  Serial.println("[IdlePhraseTask] Stopped");
-  idlePhraseTaskHandle = NULL;
-  vTaskDelete(NULL);
-}
-
 // バッファリング+フロー制御を行うストリーミング送信クラス
 // 原理: TLS送信は内部バッファ→wifiタスク(CPU0)で非同期実行されるため、
 // 送信側はavailableForWrite()で空き容量を監視し、満杯時は待機してwifiタスクに処理時間を譲る。
@@ -581,30 +559,13 @@ String ChatGPT::execChatGpt(const JsonDocument& doc, String& calledFunc) {
   avatar.setSpeechFont(&fonts::efontJA_16);
   avatar.setSpeechText("考え中…");
   
-  // 待機音声繰り返し再生タスクを起動
-  idlePhraseTaskRunning = true;
-  if(idlePhraseTaskHandle == NULL) {
-    xTaskCreatePinnedToCore(
-      idlePhraseTask,
-      "idlePhraseTask",
-      4096,
-      (void*)robot,
-      1,
-      &idlePhraseTaskHandle,
-      APP_CPU_NUM
-    );
-  }
+  // Robotクラスの待機音声タスクを起動
+  robot->startIdlePhraseTask();
   
   String ret = https_post_json("https://api.openai.com/v1/chat/completions", doc, root_ca_openai);
   
   // 待機音声タスクを停止
-  idlePhraseTaskRunning = false;
-  // タスクが完全に終了するまで少し待機
-  int waitCount = 0;
-  while(idlePhraseTaskHandle != NULL && waitCount < 50) {
-    vTaskDelay(10 / portTICK_PERIOD_MS);
-    waitCount++;
-  }
+  robot->stopIdlePhraseTask();
   
   avatar.setExpression(Expression::Neutral);
   avatar.setSpeechText("");
