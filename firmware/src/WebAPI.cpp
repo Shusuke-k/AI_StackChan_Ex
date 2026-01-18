@@ -742,21 +742,71 @@ static const char IMAGE_UPLOAD_HTML[] PROGMEM = R"KEWL(
 		});
 		
 		function handleFile(file) {
-			// ファイルサイズチェック（2MB以下）
-			if (file.size > 2 * 1024 * 1024) {
-				showStatus('画像サイズは2MB以下にしてください', 'error');
-				return;
-			}
+			showStatus('画像を処理中...', 'info');
 			
-			selectedFile = file;
-			
-			// プレビュー表示
+			// 画像をリサイズして最適化
 			const reader = new FileReader();
 			reader.onload = function(e) {
-				preview.src = e.target.result;
-				preview.style.display = 'block';
-				uploadBtn.disabled = false;
-				showStatus('画像を選択しました。アップロードボタンを押してください。', 'info');
+				const img = new Image();
+				img.onload = function() {
+					// リサイズ処理
+					const MAX_PIXELS = 800 * 600;
+					let w = img.width;
+					let h = img.height;
+					
+					// ピクセル数が大きすぎる場合はリサイズ
+					if (w * h > MAX_PIXELS) {
+						const scale = Math.sqrt(MAX_PIXELS / (w * h));
+						w = Math.floor(w * scale);
+						h = Math.floor(h * scale);
+						showStatus('画像をリサイズしています...', 'info');
+					}
+					
+					// Canvasでリサイズ
+					const canvas = document.createElement('canvas');
+					canvas.width = w;
+					canvas.height = h;
+					const ctx = canvas.getContext('2d');
+					ctx.drawImage(img, 0, 0, w, h);
+					
+					// プレビュー表示
+					preview.src = canvas.toDataURL('image/jpeg', 0.85);
+					preview.style.display = 'block';
+					
+					// Blobに変換（JPEG形式、品質85%）
+					canvas.toBlob(function(blob) {
+						// サイズチェック（1MB以上なら品質を下げる）
+						if (blob.size > 1 * 1024 * 1024) {
+							showStatus('さらに圧縮しています...', 'info');
+							canvas.toBlob(function(compressedBlob) {
+								if (compressedBlob.size > 1.5 * 1024 * 1024) {
+									showStatus('❌ 画像が大きすぎます（処理後も1.5MB超）', 'error');
+									return;
+								}
+								selectedFile = compressedBlob;
+								uploadBtn.disabled = false;
+								showStatus(`✅ 画像を最適化しました（${Math.round(compressedBlob.size/1024)}KB）`, 'success');
+							}, 'image/jpeg', 0.7);
+						} else {
+							selectedFile = blob;
+							uploadBtn.disabled = false;
+							const sizeKB = Math.round(blob.size / 1024);
+							const origSizeKB = Math.round(file.size / 1024);
+							if (origSizeKB > sizeKB) {
+								showStatus(`✅ 画像を最適化しました（${origSizeKB}KB → ${sizeKB}KB）`, 'success');
+							} else {
+								showStatus(`✅ 画像を選択しました（${sizeKB}KB）`, 'success');
+							}
+						}
+					}, 'image/jpeg', 0.85);
+				};
+				img.onerror = function() {
+					showStatus('❌ 画像の読み込みに失敗しました', 'error');
+				};
+				img.src = e.target.result;
+			};
+			reader.onerror = function() {
+				showStatus('❌ ファイルの読み込みに失敗しました', 'error');
 			};
 			reader.readAsDataURL(file);
 		}
@@ -771,7 +821,7 @@ static const char IMAGE_UPLOAD_HTML[] PROGMEM = R"KEWL(
 			showStatus('アップロード中...', 'info');
 			
 			const formData = new FormData();
-			formData.append('image', selectedFile);
+			formData.append('image', selectedFile, 'uploaded_image.jpg');
 			
 			// 質問文があれば追加
 			const question = document.getElementById('questionInput').value.trim();
@@ -785,11 +835,11 @@ static const char IMAGE_UPLOAD_HTML[] PROGMEM = R"KEWL(
 			})
 			.then(response => response.text())
 			.then(data => {
-				showStatus('アップロード成功！スタックチャンが画像を説明します。', 'success');
+				showStatus('✅ アップロード成功！スタックチャンが画像を説明します。', 'success');
 				uploadBtn.disabled = false;
 			})
 			.catch(error => {
-				showStatus('アップロード失敗: ' + error, 'error');
+				showStatus('❌ アップロード失敗: ' + error, 'error');
 				uploadBtn.disabled = false;
 			});
 		}
